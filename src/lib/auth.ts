@@ -1,9 +1,19 @@
-import { getServerSession } from "next-auth";
+import { getServerSession, type AuthOptions } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
-import { prisma } from "@/lib/prisma";
 import bcrypt from "bcryptjs";
+import { prisma } from "@/lib/prisma";
 
-export const authOptions = {
+type AuthUser = {
+  id: string;
+  email: string;
+  password: string;
+};
+
+export const authOptions: AuthOptions = {
+  session: {
+    strategy: "jwt",
+  },
+
   providers: [
     Credentials({
       name: "Credentials",
@@ -20,31 +30,35 @@ export const authOptions = {
 
         if (!user) return null;
 
-        const valid = await bcrypt.compare(credentials.password, user.password);
-        if (!valid) return null;
+        const isValid = await bcrypt.compare(
+          credentials.password,
+          user.password
+        );
+        if (!isValid) return null;
 
-        // MUST return these values
-        return { id: user.id, email: user.email };
+        // Returned object is put into `user` param of jwt() callback
+        return {
+          id: user.id,
+          email: user.email,
+        };
       },
     }),
   ],
 
-  // IMPORTANT: store user data inside JWT
-  session: { strategy: "jwt" },
-
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.id = user.id;     // Attach user.id to token
-        token.email = user.email;
+        const u = user as AuthUser;
+        token.id = u.id;
+        token.email = u.email;
       }
       return token;
     },
 
     async session({ session, token }) {
       if (session.user) {
-        session.user.id = token.id;    // Expose user.id to session
-        session.user.email = token.email;
+        session.user.id = token.id as string;
+        session.user.email = token.email as string;
       }
       return session;
     },
@@ -53,6 +67,6 @@ export const authOptions = {
   secret: process.env.NEXTAUTH_SECRET,
 };
 
-export const getSession = async () => {
-  return await getServerSession(authOptions);
-};
+export function getSession() {
+  return getServerSession(authOptions);
+}
