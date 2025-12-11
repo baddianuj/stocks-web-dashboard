@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "socket": "node server.js",
+    "dev:all": "concurrently \"npm run dev\" \"npm run socket\""
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2",
@@ -24,6 +26,7 @@
     "prisma": "^7.1.0",
     "react": "19.2.1",
     "react-dom": "19.2.1",
+    "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
@@ -33,6 +36,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "autoprefixer": "^10.4.22",
+    "concurrently": "^9.2.1",
     "eslint": "^9",
     "eslint-config-next": "16.0.8",
     "postcss": "^8.5.6",
