@@ -20,17 +20,36 @@ export const authOptions = {
 
         if (!user) return null;
 
-        const valid = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
-
+        const valid = await bcrypt.compare(credentials.password, user.password);
         if (!valid) return null;
 
+        // MUST return these values
         return { id: user.id, email: user.email };
       },
     }),
   ],
+
+  // IMPORTANT: store user data inside JWT
+  session: { strategy: "jwt" },
+
+  callbacks: {
+    async jwt({ token, user }) {
+      if (user) {
+        token.id = user.id;     // Attach user.id to token
+        token.email = user.email;
+      }
+      return token;
+    },
+
+    async session({ session, token }) {
+      if (session.user) {
+        session.user.id = token.id;    // Expose user.id to session
+        session.user.email = token.email;
+      }
+      return session;
+    },
+  },
+
   secret: process.env.NEXTAUTH_SECRET,
 };
 
