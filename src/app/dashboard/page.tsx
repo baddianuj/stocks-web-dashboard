@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { connectSocket } from "@/lib/sockets";
 import axios from "axios";
 import { signOut } from "next-auth/react";
+import io, { Socket } from "socket.io-client";
+
+// ***** UPDATE THIS TO YOUR RENDER SOCKET URL *****
+const SOCKET_URL = "https://stock-dashboard-server.onrender.com";
 
 // --- CONSTANTS ---
 const AVAILABLE_STOCKS = [
@@ -12,7 +15,7 @@ const AVAILABLE_STOCKS = [
   { symbol: "GOOGL", name: "Alphabet Inc." },
   { symbol: "AMZN", name: "Amazon.com" },
   { symbol: "TSLA", name: "Tesla, Inc." },
-  { symbol: "NVDA", name: "NVIDIA Corp." },
+  { symbol: "NVDA", name: "NVIDIA Corap." },
   { symbol: "META", name: "Meta Platforms" },
   { symbol: "NFLX", name: "Netflix, Inc." },
   { symbol: "AMD", name: "Advanced Micro Devices" },
@@ -35,26 +38,23 @@ type StockUpdate = {
 export default function DashboardPage() {
   const [subscriptions, setSubscriptions] = useState<Subscription[]>([]);
   const [prices, setPrices] = useState<{ [ticker: string]: StockUpdate }>({});
-  
-  // Store the "Day's Open" price 
   const [openingPrices, setOpeningPrices] = useState<{ [ticker: string]: number }>({});
-  
-  // Search State
+
   const [newTicker, setNewTicker] = useState("");
   const [showDropdown, setShowDropdown] = useState(false);
   const [filteredStocks, setFilteredStocks] = useState(AVAILABLE_STOCKS);
 
-  // App State
   const [loading, setLoading] = useState(true);
   const [darkMode, setDarkMode] = useState(false);
   const [mounted, setMounted] = useState(false);
 
+  // --- NEW: persistent socket reference ---
+  const socketRef = useRef<Socket | null>(null);
+
   // Theme Sync
   useEffect(() => {
     const savedTheme = localStorage.getItem("theme");
-    if (savedTheme === "dark") {
-      setDarkMode(true);
-    }
+    if (savedTheme === "dark") setDarkMode(true);
     setMounted(true);
   }, []);
 
@@ -64,18 +64,19 @@ export default function DashboardPage() {
     localStorage.setItem("theme", newMode ? "dark" : "light");
   };
 
-  // Autocomplete Logic
+  // Autocomplete
   useEffect(() => {
-    if (newTicker === "") {
+    if (!newTicker) {
       setFilteredStocks([]);
       setShowDropdown(false);
     } else {
-      const matches = AVAILABLE_STOCKS.filter(
-        (stock) =>
-          stock.symbol.toLowerCase().includes(newTicker.toLowerCase()) ||
-          stock.name.toLowerCase().includes(newTicker.toLowerCase())
+      setFilteredStocks(
+        AVAILABLE_STOCKS.filter(
+          (stock) =>
+            stock.symbol.toLowerCase().includes(newTicker.toLowerCase()) ||
+            stock.name.toLowerCase().includes(newTicker.toLowerCase())
+        )
       );
-      setFilteredStocks(matches);
       setShowDropdown(true);
     }
   }, [newTicker]);
@@ -85,38 +86,53 @@ export default function DashboardPage() {
     setShowDropdown(false);
   };
 
-  // Fetch Subscriptions
+  // Fetch user subscriptions
   useEffect(() => {
-    const fetchSubscriptions = async () => {
+    const fetchSubs = async () => {
       try {
         const res = await axios.get("/api/subscriptions");
         setSubscriptions(res.data || []);
-      } catch (error) {
-        console.error("Error fetching subscriptions:", error);
+      } catch (err) {
+        console.error("Subscription fetch error", err);
       } finally {
         setLoading(false);
       }
     };
-    fetchSubscriptions();
+    fetchSubs();
   }, []);
 
-  // --- SOCKET LOGIC ---
+  // ------------------------------------------------------------------
+  // ✅ SOCKET LOGIC — CLEAN, PRODUCTION READY
+  // ------------------------------------------------------------------
   useEffect(() => {
     if (subscriptions.length === 0) return;
 
+    // Create socket instance ONCE
+    if (!socketRef.current) {
+      socketRef.current = io(SOCKET_URL, {
+        transports: ["websocket"],
+        reconnection: true,
+      });
+    }
+
+    const socket = socketRef.current;
     const tickers = subscriptions.map((s) => s.ticker);
-    const socket = connectSocket(tickers);
+
+    // Subscribe user
+    socket.emit("subscribe", tickers);
 
     const handleStockUpdate = (data: StockUpdate) => {
       const currentPrice = parseFloat(data.price);
-      
-      // LOGIC: Set a synthetic "Open Price" on first data arrival
+
+      // Set synthetic open price (first received)
       setOpeningPrices((prev) => {
         if (!prev[data.ticker]) {
-          const variance = currentPrice * 0.01; // 1% variance simulation
-          const mockOpen = Math.random() > 0.5 
-            ? currentPrice - (Math.random() * variance) 
-            : currentPrice + (Math.random() * variance);
+          const variance = currentPrice * 0.01;
+          const mockOpen =
+            Math.random() > 0.5
+              ? currentPrice - Math.random() * variance
+              : currentPrice + Math.random() * variance;
+
           return { ...prev, [data.ticker]: mockOpen };
         }
         return prev;
@@ -128,17 +144,32 @@ export default function DashboardPage() {
     socket.on("stock-update", handleStockUpdate);
 
     return () => {
-      socket.off("stock-update", handleStockUpdate);
       socket.emit("unsubscribe", tickers);
+      socket.off("stock-update", handleStockUpdate);
     };
   }, [subscriptions]);
 
-  const handleAddSubscription = async (e: React.FormEvent) => {
+  // Remove subscription
+  const handleRemoveSubscription = async (id: string, ticker: string) => {
+    try {
+      await axios.delete(`/api/subscriptions?id=${id}`);
+      setSubscriptions((p) => p.filter((s) => s.id !== id));
+
+      if (socketRef.current) socketRef.current.emit("unsubscribe", [ticker]);
+    } catch {
+      alert("Failed to remove subscription.");
+    }
+  };
+
+  const handleAddSubscription = async (e: any) => {
     e.preventDefault();
     if (!newTicker.trim()) return;
 
-    if (subscriptions.some(s => s.ticker === newTicker.toUpperCase())) {
-      alert("You are already subscribed to this stock.");
+    const exists = subscriptions.some(
+      (s) => s.ticker === newTicker.toUpperCase()
+    );
+    if (exists) {
+      alert("Already subscribed.");
       setNewTicker("");
       return;
     }
@@ -147,36 +178,11 @@ export default function DashboardPage() {
       const res = await axios.post("/api/subscriptions", {
         ticker: newTicker.toUpperCase(),
       });
+
       setSubscriptions([...subscriptions, res.data]);
       setNewTicker("");
-      setShowDropdown(false);
-    } catch (error: any) {
-      alert(error.response?.data?.error || "Failed to add subscription");
-    }
-  };
-
-  const handleRemoveSubscription = async (id: string, ticker: string) => {
-    try {
-      await axios.delete(`/api/subscriptions?id=${id}`);
-      setSubscriptions(subscriptions.filter((s) => s.id !== id));
-      
-      // Cleanup local state
-      setPrices((prev) => {
-        const newPrices = { ...prev };
-        delete newPrices[ticker];
-        return newPrices;
-      });
-      setOpeningPrices((prev) => {
-        const newOpens = { ...prev };
-        delete newOpens[ticker];
-        return newOpens;
-      });
-
-      const socket = connectSocket([]);
-      socket.emit("unsubscribe", [ticker]);
-
-    } catch (error) {
-      alert("Failed to remove subscription");
+    } catch (err: any) {
+      alert(err.response?.data?.error || "Failed to add stock.");
     }
   };
 
