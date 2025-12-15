@@ -303,7 +303,7 @@ export default function Home() {
         darkMode ? "border-gray-800 bg-black text-gray-600" : "border-gray-200 bg-gray-50 text-gray-500"
       }`}>
         <div className="max-w-6xl mx-auto px-6">
-          <p>© 2024 StockDash. Real-time data provided for educational purposes.</p>
+          <p>© 202% StockDash. Real-time data provided for educational purposes. BY ANUJ BADDI</p>
           <div className="mt-2 flex justify-center gap-4">
             <span>Next.js 14</span>
             <span>•</span>
